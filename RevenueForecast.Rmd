@@ -1,0 +1,273 @@
+---
+title: "Revenue Forecast"
+author: "Jaime Wu"
+date: "22/08/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+## Load Libraries and Data 
+
+```{r message = FALSE, warning = FALSE}
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(leaps)
+library(readr)
+library(ggplot2)
+library(forecast)
+library(fpp2)
+library(TTR)
+library(dplyr)
+library(zoo)
+```
+
+## Problem and Background 
+
+The online retail II data set contains all the invoice transactions occurring for a UK-based and registered, non-store online retail between 01/12/2009 and 09/12/2011. It is of interest to predict how much revenue the business will be earning on the month of December 2011, and whether the owner should purchase a new Ferrari for his partner as a Christmas gift. 
+
+## Exploratory Data Analysis 
+
+```{r message = FALSE}
+# Load data
+salesData <- read_csv("./data/online_retail_II.csv")
+head(salesData)
+summary(salesData)
+```
+
+A brief summary of the entire invoice data set shows that there are about 1,067,371 invoice transactions. Immediately it becomes evident that there is test data and erroneous entries within the data set since there are negative quantities and negative prices. Furthermore, the max and min values for both quantity and price are extremely large compared to the mean and median, suggesting outliers are present within the data set. Nevertheless, the following exploratory data analysis will be completed to visualise how much data cleaning is required:
+- Total daily, weekly and monthly sales volumes
+- Last months’ revenue share by product and by customer
+- Weighted average monthly sale revenue by volume
+
+```{r}
+# Brief data cleaning to remove outliers and erroneous entries 
+salesData %>% 
+  ggplot(aes(x = Quantity)) +
+  geom_histogram() + 
+  labs(title = 'Histogram of Quantity')
+
+salesData %>% 
+  ggplot(aes(x = Price)) +
+  geom_histogram() + 
+  labs(title = 'Histogram of Quantity')
+
+salesData %>% arrange(Price)
+```
+
+An initial histogram plot of quantity and price indicates that there are outliers across both attributes and should be removed before analysis. It is important to realise that the negative quantities relate to sales returns; therefore, we should not disregard quantities less than zero. Any data with quantity less than -300 or greater than 300 will be filtered since it is possible for a customer to purchase a cheap product in bulk. In contrast, negative prices should be removed as it is likely that they relate to test data as suggested by the adjustment for bad debt entries. Therefore, data with as price less than 0 or greater than 100 will be filtered out. 
+
+```{r}
+salesData %>% 
+  filter(Quantity < 300, Quantity > -300) %>%
+  ggplot(aes(x = Quantity)) +
+  geom_histogram() + 
+  labs(title = 'Histogram of Quantity')
+
+salesData %>% 
+  filter(Price < 100, Price >= 0) %>% 
+  ggplot(aes(x = Price)) +
+  geom_histogram() + 
+  labs(title = 'Histogram of Quantity')
+```
+
+Once the erroneous data is removed, the histogram plots appear more realistic for the following exploratory data analysis:
+- Total daily, weekly and monthly sales volumes
+- Last months’ revenue share by product and by customer
+- Weighted average monthly sale revenue by volume
+
+```{r message = FALSE}
+# Exploratory Data Analysis 
+# Add day of the week, week number, month, and year variables to the data for plotting 
+salesDataC <- salesData %>%
+  filter(
+    Quantity > -300,
+    Quantity < 300, 
+    Price >= 0, 
+    Price < 100) %>%
+  mutate(
+    DOW = wday(InvoiceDate, label = TRUE, abbr = TRUE, week_start = 1),
+    Week = week(InvoiceDate),
+    Month = month(InvoiceDate, label = TRUE, abbr = TRUE),
+    Year = year(InvoiceDate)
+  )
+
+# Daily sales volume
+salesDataC %>% 
+group_by(DOW) %>% 
+summarise(SalesVolume = sum(Quantity)) %>% 
+ggplot(aes(x = DOW, y = SalesVolume)) + 
+  geom_bar(stat = 'identity') + 
+  labs(x = 'Day of the Week', 
+       y = 'Total Daily Sales Volume', 
+       title = 'Barplot of Total Daily Sales Volume by Day of the Week')
+
+# Weekly sales volume 
+salesDataC %>% 
+group_by(Week) %>% 
+summarise(SalesVolume = sum(Quantity)) %>% 
+ggplot(aes(x = Week, y = SalesVolume)) + 
+  geom_bar(stat = 'identity') + 
+  labs(x = 'Week of the Year', 
+       y = 'Total Weekly Sales Volume', 
+       title = 'Barplot of Total Weekly Sales Volume by Week of the Year')
+
+# Monthly sales volume 
+salesDataC %>% 
+group_by(Month) %>% 
+summarise(SalesVolume = sum(Quantity)) %>% 
+ggplot(aes(x = Month, y = SalesVolume)) + 
+  geom_bar(stat = 'identity') + 
+  labs(x = 'Month of the Year', 
+       y = 'Total Monthly Sales Volume', 
+       title = 'Barplot of Total Monthly Sales Volume by Month of the Year')
+
+# Yearly sales volume 
+salesDataC %>%
+group_by(Year) %>% 
+summarise(SalesVolume = sum(Quantity)) %>% 
+ggplot(aes(x = Year, y = SalesVolume)) + 
+  geom_bar(stat = 'identity') + 
+  labs(x = 'Year', 
+       y = 'Total Yearly Sales Volume', 
+       title = 'Barplot of Total Yearly Sales Volume by Year')
+```
+
+The total daily sales volume against the day of the week shows an abnormally low amounts of sales on Saturdays. It is unlikely that the online retailer is closed on Saturday, and could be potentially due to an error during the data collection process. Nevertheless, the plot suggests that most of the sales is made during the middle of the week then trails off in the weekend. 
+
+The weekly and monthly sales volume plot indicates the sales volume is roughly the same for the first 7-8 months of the year, but increases near the end of the year as we approach Christmas, suggesting the data is seasonal. 
+
+The sales sales volume over each year is consistent to the amount of data we have for each year. 
+
+```{r message = FALSE}
+# Last months revenue shared by product and by customer 
+salesDataC %>% 
+  filter(Year == 2011, Month == 'Nov') %>% 
+  group_by(StockCode) %>% 
+  summarise(Revenue = sum(Price*Quantity), Description = first(Description)) %>% 
+  arrange(desc(Revenue), by_group = TRUE)
+
+salesDataC %>% 
+  filter(Year == 2011, Month == 'Nov') %>% 
+  group_by(`Customer ID`) %>% 
+  summarise(Revenue = sum(Price*Quantity)) %>% 
+  arrange(desc(Revenue), by_group = TRUE)
+
+salesDataC %>% 
+  filter(Year == 2011, Month == 'Nov') %>% 
+  group_by(StockCode, `Customer ID`) %>% 
+  summarise(Revenue = sum(Price*Quantity), Description = first(Description)) %>% 
+  arrange(desc(Revenue), by_group = TRUE)
+```
+
+The top product on Nov of 2011 appears to be Rabbit night light at a revenue of \$22,805.25. The top customer appears to be 14646, spending \$24,225.33. The customer that spent the most on Nov 2011 on a product is 15061, with \$1664.40 spent on Regency Cakestand 3 Tier. 
+
+```{r}
+# Monthly weighted average sales revenue by sales volume 
+salesDataC %>% 
+  group_by(Month) %>% 
+  summarise(WtAvgSalePriceByVolume = sum(Price*Quantity)/sum(Quantity)) %>% 
+  ggplot(aes(x = Month, y = WtAvgSalePriceByVolume)) + 
+    geom_point() + 
+    geom_line(aes(group = 1)) + 
+    labs(x = 'Month of Year', 
+         y = 'Weighted Avg Sales Revenue', 
+         title = 'Weighted Avg Sales Revenue by Sales volume against Month of the Year')
+```
+
+The trend is quite interesting as during the holiday seasons, people are not only purchasing more products but also purchasing more expensive products compared to other months of the year. It is also interesting to see that after Christmas, people are purchasing much cheaper products relative to the amount of products being purchased. 
+
+
+# Clean Data - Deal With Sales Returns 
+
+A negative value for quantity indicate a sales return, and some of these returns relate to products sold before the data collection date, thus should be filtered out. If a sales return is made in the current year, then there should be a corresponding sales invoice with positive quantity, and every other variable should also have the exact same value. Therefore, the sales return should be less than the quantity in sales invoice unless the customer has purchased items before data collection date in which case we should remove the sales return. Further cleaning could involve data imputation on missing values in the price or quantity attributes or searching through the descriptions of each product for obvious signs of test data.
+
+
+```{r eval = FALSE, message = FALSE}
+# Remove observations with no quantity 
+missing <- is.na(salesDataC$Quantity)
+salesDataC <- salesDataC[!missing, ]
+
+# Find all sales returns
+salesReturns <- salesDataC$Quantity < 0
+
+for (i in 1:length(salesReturns)) {
+  if (salesReturns[i]) {
+    # For each sales return, find the corresponding sales invoice 
+    # If we cannot find a corresponding sales invoice then the sales return 
+    # relates to the period prior to data collection and should be removed
+     match <- salesDataC %>% 
+       filter(
+         StockCode == salesDataC$StockCode[i], 
+         `Customer ID` == salesDataC$`Customer ID`[i], 
+         Price == salesDataC$Price[i], 
+         Country == salesDataC$Country[i], 
+         Quantity == salesDataC$Quantity[i]*-1)
+    if (dim(match)[1] > 0) {
+      salesReturns[i] <- FALSE
+    }
+  }
+}
+
+salesDataC <- salesDataC[!salesReturns, ]
+write_csv(salesDataC, "./data/salesDataClean.csv")
+```
+
+# Forecasting 
+To forecast the revenue for December 2011 we will need to fit the data to a model for prediction. The simplest approach would be to fit the revenue against time in a linear regression model. However, as the sales data is time series a better approach would be identifying trends from a time series regression analysis.
+
+The metrics of interest would be the total daily revenue between the periods 01/12/2009 and 09/12/2011. We can obtain the daily total revenue by simply multiplying the price and quantity to get revenue then group by the invoice date. 
+
+We can achieve basic forecasting using a naive model, a simple exponential smoothing model, and an ARIMA model. A naive model will use the most recent observation as the forecast for the next observation. It is not wise to assume that the future revenue will be reflective of the past revenue since seasonal effects can be seen in the exploratory analysis. A simple exponentially smoothing model could be fitted to account for the trend and seasonality of the data; however, the best model would likely to be an ARIMA model since it also takes into account for autocorrelation, the time lag between observations. As with all predictions, uncertainty will arise, so a 95% prediction interval will be used as relative good gauge of the predicted revenue, assuming the owner is risk adverse. 
+
+```{r message = FALSE}
+# Prepare data 
+salesDataClean <- read_csv("./data/salesDataClean.csv")
+
+# Aggregate metrics for prediction
+salesDataPred <- salesDataClean %>%
+  mutate(
+    Revenue = Quantity*Price,
+    Date = as.Date(InvoiceDate)
+  ) %>%
+  filter(Revenue > 0) %>%
+  group_by(Date) %>%
+  summarise(DailyRevenue = sum(Revenue)) # Compute daily revenue 
+
+# Create a time series object from start date of 01/12/2009 to 09/12/2011 
+# and impute any missing data using zoo
+dates <- seq(as.Date("2009-12-01"), as.Date("2011-12-09"), by = "day")
+datesTable <- tibble("Date" = dates)
+salesDataPred <- left_join(datesTable, salesDataPred, by = "Date")
+salesDataPredTs <- zoo(salesDataPred$DailyRevenue, dates)
+salesDataPredTs <- na.approx(salesDataPredTs) 
+
+# Fit a simple linear model for comparison 
+linearModel <- lm(DailyRevenue ~ Date, data = salesDataPred)
+summary(linearModel)
+plot(DailyRevenue ~ Date, data = salesDataPred)
+abline(linearModel$coef[1], linearModel$coef[2])
+pred = tibble(Date = seq(as.Date("2011-12-10"), as.Date("2011-12-31"), by = "day"))
+linearModelPredictions <- predict(linearModel, pred, interval = "prediction")
+
+# Fit an ARIMA model using the time series data 
+arimaModel <- auto.arima(salesDataPredTs, seasonal = TRUE)
+summary(arimaModel)
+forecastArima <- forecast(arimaModel, h = 22)
+summaryModel <- tibble(summary(forecastArima))
+plot(forecastArima)
+
+# Calculate expected revenue with 95% prediction intervals 
+earnedRevenue <- salesDataPred %>% 
+  filter(Date > as.Date("2011-11-30")) %>% 
+  .$DailyRevenue %>% 
+  sum(na.rm = TRUE)
+expectedRevenue <- sum(summaryModel$`Point Forecast`) + earnedRevenue
+expectedRevenueLow <- sum(summaryModel$`Lo 95`) + earnedRevenue
+expectedRevenueHigh <- sum(summaryModel$`Hi 95`) + earnedRevenue
+tibble(`Low Expected Revenue` = expectedRevenueLow, 
+       `Expected Revenue` = expectedRevenue, 
+       `High Expected Revenue` = expectedRevenueHigh)
+```
+
+The expected revenue to be earned by the online retailer on December 2011 is about \$1,440,130 with a low and high prediction of \$670,198 and \$2,210,062. Assuming that a new Ferrari is approximately $400,000 NZD, as listed on the official Auckland Ferrari dealers website, I recommend him to purchase the new Ferrari. I strongly back my recommendation as the 95% prediction interval is above the price of a new Ferrari. 
